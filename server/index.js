@@ -1,5 +1,5 @@
 const express = require('express');
-const mysql = require('mysql2/promise');
+const { MongoClient, ObjectId } = require('mongodb');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
 const session = require('express-session');
@@ -26,68 +26,76 @@ app.use(session({
   }
 }));
 
-// Database connection
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'root',
-  database: process.env.DB_NAME || 'cricket_booking',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-};
+// MongoDB connection
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://dhvani:dhvani@admin.e61e8mi.mongodb.net/';
+const DB_NAME = process.env.DB_NAME || 'cricket_booking';
 
-const pool = mysql.createPool(dbConfig);
+let db;
+let client;
 
-// Helper function to execute queries
-async function query(sql, params) {
+// Connect to MongoDB
+async function connectDB() {
   try {
-    const [results] = await pool.execute(sql, params);
-    return results;
+    client = new MongoClient(MONGODB_URI);
+    await client.connect();
+    db = client.db(DB_NAME);
+    console.log('✅ MongoDB connection successful');
+    return db;
   } catch (error) {
-    console.error('Database error:', error);
-    console.error('SQL:', sql);
-    console.error('Params:', params);
+    console.error('❌ MongoDB connection error:', error.message);
     throw error;
   }
+}
+
+// Helper function to transform MongoDB document (_id to id)
+function transformDoc(doc) {
+  if (!doc) return null;
+  const { _id, ...rest } = doc;
+  return { id: _id, ...rest };
+}
+
+// Helper function to transform array of documents
+function transformDocs(docs) {
+  return docs.map(transformDoc);
 }
 
 // Initialize default admin user
 async function initAdmin() {
   try {
-    // Test database connection first
-    await pool.execute('SELECT 1');
-    console.log('✅ Database connection successful');
-    
     const adminEmail = 'admin@cricket.com';
     const adminPassword = 'admin123';
     
-    const existing = await query('SELECT * FROM admin_users WHERE email = ?', [adminEmail]);
+    const adminUsers = db.collection('admin_users');
+    const existing = await adminUsers.findOne({ email: adminEmail });
     
-    if (!existing || existing.length === 0) {
+    if (!existing) {
       const hashedPassword = await bcrypt.hash(adminPassword, 10);
-      await query('INSERT INTO admin_users (email, password) VALUES (?, ?)', [adminEmail, hashedPassword]);
+      await adminUsers.insertOne({
+        email: adminEmail,
+        password: hashedPassword,
+        created_at: new Date(),
+        updated_at: new Date()
+      });
       console.log('✅ Default admin user created: admin@cricket.com / admin123');
     } else {
       console.log('✅ Admin user already exists');
     }
   } catch (error) {
     console.error('❌ Error initializing admin:', error.message);
-    console.error('Make sure:');
-    console.error('  1. MySQL server is running');
-    console.error('  2. Database "cricket_booking" exists');
-    console.error('  3. Table "admin_users" exists');
-    console.error('  4. Database credentials in .env are correct');
   }
 }
 
-// Initialize admin on startup
-initAdmin();
+// Initialize database connection
+connectDB().then(() => {
+  initAdmin();
+}).catch((error) => {
+  console.error('Failed to initialize database:', error);
+});
 
 // Health check endpoint
 app.get('/api/health', async (req, res) => {
   try {
-    await pool.execute('SELECT 1');
+    await db.admin().ping();
     res.json({ 
       status: 'ok', 
       database: 'connected',
@@ -102,6 +110,43 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// Test database endpoint
+app.get('/api/test-db', async (req, res) => {
+  try {
+    // Test connection
+    await db.admin().ping();
+    
+    // Test collection exists
+    const collections = await db.listCollections({ name: 'admin_users' }).toArray();
+    const collectionExists = collections.length > 0;
+    
+    if (!collectionExists) {
+      return res.status(500).json({ 
+        error: 'Collection admin_users does not exist',
+        solution: 'Collections will be created automatically on first use'
+      });
+    }
+    
+    // Test query
+    const users = await db.collection('admin_users').find({}).limit(1).toArray();
+    
+    res.json({ 
+      status: 'ok',
+      database: 'connected',
+      collection_exists: collectionExists,
+      users_count: users.length,
+      message: 'Database is working correctly'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Database error',
+      message: error.message,
+      code: error.code,
+      solution: 'Check MongoDB connection string in .env file'
+    });
+  }
+});
+
 // Auth middleware
 const requireAuth = (req, res, next) => {
   if (req.session && req.session.isAdmin) {
@@ -111,41 +156,6 @@ const requireAuth = (req, res, next) => {
 };
 
 // ==================== AUTH ROUTES ====================
-
-// Test database endpoint
-app.get('/api/test-db', async (req, res) => {
-  try {
-    // Test connection
-    await pool.execute('SELECT 1');
-    
-    // Test table exists
-    const [tables] = await pool.execute("SHOW TABLES LIKE 'admin_users'");
-    if (tables.length === 0) {
-      return res.status(500).json({ 
-        error: 'Table admin_users does not exist',
-        solution: 'Run database/schema.sql in MySQL Workbench'
-      });
-    }
-    
-    // Test query
-    const users = await query('SELECT * FROM admin_users LIMIT 1');
-    
-    res.json({ 
-      status: 'ok',
-      database: 'connected',
-      table_exists: true,
-      users_count: users.length,
-      message: 'Database is working correctly'
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      error: 'Database error',
-      message: error.message,
-      code: error.code,
-      solution: 'Check MySQL server is running and credentials are correct'
-    });
-  }
-});
 
 // Login
 app.post('/api/auth/login', async (req, res) => {
@@ -161,28 +171,27 @@ app.post('/api/auth/login', async (req, res) => {
 
     // Test database connection first
     try {
-      await pool.execute('SELECT 1');
+      await db.admin().ping();
     } catch (dbError) {
       console.error('Database connection failed:', dbError.message);
       return res.status(500).json({ 
         error: 'Database connection failed',
         message: dbError.message,
         code: dbError.code,
-        solution: 'Check MySQL server is running and .env file has correct credentials'
+        solution: 'Check MongoDB connection string in .env file'
       });
     }
 
     console.log('Database connection OK, querying for user...');
-    const users = await query('SELECT * FROM admin_users WHERE email = ?', [email]);
-    console.log('Query result - Users found:', users ? users.length : 0);
+    const user = await db.collection('admin_users').findOne({ email: email });
+    console.log('Query result - User found:', user ? 'Yes' : 'No');
     
-    if (!users || users.length === 0) {
+    if (!user) {
       console.log('No user found with email:', email);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const user = users[0];
-    console.log('User found - ID:', user.id, 'Email:', user.email);
+    console.log('User found - ID:', user._id, 'Email:', user.email);
     
     // Check if password hash exists
     if (!user.password) {
@@ -201,7 +210,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     console.log('Setting session...');
     req.session.isAdmin = true;
-    req.session.userId = user.id;
+    req.session.userId = user._id.toString ? user._id.toString() : user._id;
     req.session.userEmail = user.email;
 
     console.log('✅ Login successful for:', user.email);
@@ -218,14 +227,10 @@ app.post('/api/auth/login', async (req, res) => {
     
     // Provide helpful error messages
     let userMessage = 'Internal server error';
-    if (error.code === 'ER_ACCESS_DENIED_ERROR') {
-      userMessage = 'Database access denied - check DB_USER and DB_PASSWORD in .env';
-    } else if (error.code === 'ER_BAD_DB_ERROR') {
-      userMessage = 'Database does not exist - run database/schema.sql';
-    } else if (error.code === 'ECONNREFUSED') {
-      userMessage = 'Cannot connect to MySQL server - check if MySQL is running';
-    } else if (error.code === 'ER_NO_SUCH_TABLE') {
-      userMessage = 'Table admin_users does not exist - run database/schema.sql';
+    if (error.message.includes('authentication failed')) {
+      userMessage = 'MongoDB authentication failed - check connection string in .env';
+    } else if (error.message.includes('ENOTFOUND') || error.message.includes('ECONNREFUSED')) {
+      userMessage = 'Cannot connect to MongoDB server - check connection string';
     }
     
     res.status(500).json({ 
@@ -256,10 +261,11 @@ app.get('/api/auth/session', (req, res) => {
 // Get all bookings (admin only)
 app.get('/api/bookings', requireAuth, async (req, res) => {
   try {
-    const bookings = await query(
-      'SELECT * FROM bookings ORDER BY booking_date DESC, start_time DESC'
-    );
-    res.json(bookings);
+    const bookings = await db.collection('bookings')
+      .find({})
+      .sort({ booking_date: -1, start_time: -1 })
+      .toArray();
+    res.json(transformDocs(bookings));
   } catch (error) {
     console.error('Fetch bookings error:', error);
     res.status(500).json({ error: 'Failed to fetch bookings' });
@@ -275,22 +281,16 @@ app.get('/api/bookings/search', async (req, res) => {
       return res.status(400).json({ error: 'Phone or email is required' });
     }
 
-    let sql = 'SELECT * FROM bookings WHERE 1=1';
-    const params = [];
+    const query = {};
+    if (phone) query.phone = phone;
+    if (email) query.email = email;
 
-    if (phone) {
-      sql += ' AND phone = ?';
-      params.push(phone);
-    }
-    if (email) {
-      sql += ' AND email = ?';
-      params.push(email);
-    }
-
-    sql += ' ORDER BY booking_date DESC, start_time DESC';
-
-    const bookings = await query(sql, params);
-    res.json(bookings);
+    const bookings = await db.collection('bookings')
+      .find(query)
+      .sort({ booking_date: -1, start_time: -1 })
+      .toArray();
+    
+    res.json(transformDocs(bookings));
   } catch (error) {
     console.error('Search bookings error:', error);
     res.status(500).json({ error: 'Failed to search bookings' });
@@ -307,20 +307,21 @@ app.post('/api/bookings/check-availability', async (req, res) => {
     }
 
     // Get all bookings for the same date and ground size
-    const existingBookings = await query(
-      'SELECT * FROM bookings WHERE booking_date = ? AND ground_size = ? AND status IN (?, ?)',
-      [booking_date, ground_size, 'pending', 'confirmed']
-    );
+    const existingBookings = await db.collection('bookings')
+      .find({
+        booking_date: booking_date,
+        ground_size: ground_size,
+        status: { $in: ['pending', 'confirmed'] }
+      })
+      .toArray();
 
     // Parse times
-    const [startHour, startMinute] = start_time.split(':').map(Number);
     const newStart = new Date(`2000-01-01T${start_time}`);
     const newEnd = new Date(newStart);
     newEnd.setHours(newEnd.getHours() + duration);
 
     // Check for conflicts
     const hasConflict = existingBookings.some(booking => {
-      const [bookingHour, bookingMinute] = booking.start_time.split(':').map(Number);
       const bookingStart = new Date(`2000-01-01T${booking.start_time}`);
       const bookingEnd = new Date(bookingStart);
       bookingEnd.setHours(bookingEnd.getHours() + booking.duration);
@@ -360,15 +361,25 @@ app.post('/api/bookings', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const id = uuidv4();
-    await query(
-      `INSERT INTO bookings (id, username, phone, email, booking_date, start_time, duration, ground_size, night_mode, amount, status, payment_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, username, phone, email, booking_date, start_time, duration, ground_size, night_mode || false, amount, status, payment_status]
-    );
+    const booking = {
+      _id: uuidv4(),
+      username,
+      phone,
+      email,
+      booking_date,
+      start_time,
+      duration,
+      ground_size,
+      night_mode: night_mode || false,
+      amount,
+      status,
+      payment_status,
+      created_at: new Date(),
+      updated_at: new Date()
+    };
 
-    const booking = await query('SELECT * FROM bookings WHERE id = ?', [id]);
-    res.status(201).json(booking[0]);
+    await db.collection('bookings').insertOne(booking);
+    res.status(201).json(transformDoc(booking));
   } catch (error) {
     console.error('Create booking error:', error);
     res.status(500).json({ error: 'Failed to create booking' });
@@ -381,29 +392,33 @@ app.put('/api/bookings/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const updates = req.body;
 
-    // Build update query dynamically
+    // Build update object dynamically
     const allowedFields = ['status', 'payment_status', 'amount', 'username', 'phone', 'email', 'booking_date', 'start_time', 'duration', 'ground_size', 'night_mode'];
-    const updateFields = [];
-    const values = [];
-
+    const updateFields = {};
+    
     Object.keys(updates).forEach(key => {
       if (allowedFields.includes(key)) {
-        updateFields.push(`${key} = ?`);
-        values.push(updates[key]);
+        updateFields[key] = updates[key];
       }
     });
 
-    if (updateFields.length === 0) {
+    if (Object.keys(updateFields).length === 0) {
       return res.status(400).json({ error: 'No valid fields to update' });
     }
 
-    values.push(id);
-    const sql = `UPDATE bookings SET ${updateFields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+    updateFields.updated_at = new Date();
 
-    await query(sql, values);
-    const booking = await query('SELECT * FROM bookings WHERE id = ?', [id]);
+    const result = await db.collection('bookings').findOneAndUpdate(
+      { _id: id },
+      { $set: updateFields },
+      { returnDocument: 'after' }
+    );
     
-    res.json(booking[0]);
+    if (!result || !result.value) {
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    
+    res.json(transformDoc(result.value));
   } catch (error) {
     console.error('Update booking error:', error);
     res.status(500).json({ error: 'Failed to update booking' });
@@ -414,7 +429,12 @@ app.put('/api/bookings/:id', requireAuth, async (req, res) => {
 app.delete('/api/bookings/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    await query('DELETE FROM bookings WHERE id = ?', [id]);
+    const result = await db.collection('bookings').deleteOne({ _id: id });
+    
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    
     res.json({ message: 'Booking deleted successfully' });
   } catch (error) {
     console.error('Delete booking error:', error);
@@ -440,15 +460,19 @@ app.post('/api/payments', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const id = uuidv4();
-    await query(
-      `INSERT INTO payments (id, booking_id, razorpay_order_id, razorpay_payment_id, razorpay_signature, amount, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, booking_id, razorpay_order_id, razorpay_payment_id, razorpay_signature, amount, status]
-    );
+    const payment = {
+      _id: uuidv4(),
+      booking_id,
+      razorpay_order_id: razorpay_order_id || null,
+      razorpay_payment_id: razorpay_payment_id || null,
+      razorpay_signature: razorpay_signature || null,
+      amount,
+      status,
+      created_at: new Date()
+    };
 
-    const payment = await query('SELECT * FROM payments WHERE id = ?', [id]);
-    res.status(201).json(payment[0]);
+    await db.collection('payments').insertOne(payment);
+    res.status(201).json(transformDoc(payment));
   } catch (error) {
     console.error('Create payment error:', error);
     res.status(500).json({ error: 'Failed to create payment' });
@@ -458,14 +482,12 @@ app.post('/api/payments', async (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📊 Database: ${dbConfig.database}@${dbConfig.host}`);
+  console.log(`📊 Database: MongoDB (${DB_NAME})`);
   console.log(`🔍 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🧪 Test database: http://localhost:${PORT}/api/test-db`);
   console.log(`📝 Login endpoint: POST http://localhost:${PORT}/api/auth/login`);
   console.log(`\n⚠️  If you see database errors, check:`);
-  console.log(`   1. MySQL server is running`);
-  console.log(`   2. Database "cricket_booking" exists`);
-  console.log(`   3. Table "admin_users" exists`);
-  console.log(`   4. server/.env has correct credentials\n`);
+  console.log(`   1. MongoDB connection string in .env file`);
+  console.log(`   2. Network access is enabled in MongoDB Atlas`);
+  console.log(`   3. Database name is correct\n`);
 });
-

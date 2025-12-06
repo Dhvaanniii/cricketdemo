@@ -1,6 +1,6 @@
 # Cricket Ground Booking System
 
-A complete cricket ground slot-booking system with React, MySQL, Express, and Razorpay integration.
+A complete cricket ground slot-booking system with React, MongoDB, Express, and Razorpay integration.
 
 ## 🔐 Default Admin Login
 
@@ -12,14 +12,15 @@ A complete cricket ground slot-booking system with React, MySQL, Express, and Ra
 ## Quick Start
 
 ### 1. Database Setup
-1. Open MySQL Workbench
-2. Run `database/schema.sql` to create database and tables
+1. MongoDB connection string is configured in `server/.env`
+2. Collections are created automatically on first use
+3. Default admin user is created automatically on server startup
 
 ### 2. Backend Setup
 ```bash
 cd server
 npm install
-# Update server/.env with your MySQL credentials
+# MongoDB connection string is already in server/.env.example
 npm start
 ```
 
@@ -34,7 +35,7 @@ npm run dev
 
 - **Frontend**: React + TypeScript + Tailwind CSS
 - **Backend**: Node.js + Express
-- **Database**: MySQL (MySQL Workbench)
+- **Database**: MongoDB (MongoDB Atlas)
 - **Payment**: Razorpay
 
 ## Features
@@ -52,7 +53,7 @@ npm run dev
 ```
 ├── src/              # Frontend React app
 ├── server/           # Backend Express API
-├── database/         # MySQL schema and queries
+├── database/         # MongoDB schema and queries
 └── scripts/          # Utility scripts
 ```
 

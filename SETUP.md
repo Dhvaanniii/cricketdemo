@@ -34,7 +34,7 @@ A complete cricket ground slot-booking system with React, MySQL, Express, and Ra
 
 - **Frontend**: React + TypeScript + Tailwind CSS
 - **Backend**: Node.js + Express
-- **Database**: MySQL (MySQL Workbench)
+- **Database**: MongoDB (MongoDB Atlas)
 - **Authentication**: Session-based (Express Sessions)
 - **Payment**: Razorpay
 - **Routing**: React Router
@@ -56,24 +56,22 @@ A complete cricket ground slot-booking system with React, MySQL, Express, and Ra
 
 ## Setup Instructions
 
-### 1. Database Setup (MySQL Workbench)
+### 1. Database Setup (MongoDB)
 
-1. **Open MySQL Workbench** and connect to your MySQL server
+1. **MongoDB Atlas Setup:**
+   - Collections are created automatically when first document is inserted
+   - No manual setup required - the server will create collections on first use
+   - Default admin user will be created automatically on server startup
 
-2. **Run the SQL script:**
-   - Open `database/schema.sql` in MySQL Workbench
-   - Execute the entire script (or copy-paste into a new query tab)
-   - This will create:
-     - Database: `cricket_booking`
-     - Tables: `admin_users`, `bookings`, `payments`
-     - Default admin user: `admin@cricket.com` / `admin123`
+2. **MongoDB Connection String:**
+   - Your MongoDB connection string is already configured
+   - It will be stored in `server/.env` file
+   - Format: `mongodb+srv://username:password@cluster.mongodb.net/`
 
 3. **Verify the database:**
-   ```sql
-   USE cricket_booking;
-   SHOW TABLES;
-   SELECT * FROM admin_users;
-   ```
+   - Collections will be created automatically
+   - Check MongoDB Atlas dashboard to see collections after first use
+   - Collections: `admin_users`, `bookings`, `payments`
 
 ### 2. Backend Server Setup
 
@@ -89,16 +87,15 @@ A complete cricket ground slot-booking system with React, MySQL, Express, and Ra
 
 3. **Configure environment:**
    - Copy `server/.env.example` to `server/.env`
-   - Update database credentials:
+   - Update MongoDB connection string:
      ```env
-     DB_HOST=localhost
-     DB_USER=root
-     DB_PASSWORD=your_mysql_password
+     MONGODB_URI=mongodb+srv://dhvani:dhvani@admin.e61e8mi.mongodb.net/
      DB_NAME=cricket_booking
      PORT=3001
      FRONTEND_URL=http://localhost:5173
      SESSION_SECRET=your-secret-key-change-in-production
      ```
+   - **Note:** The MongoDB connection string is already configured in `.env.example`
 
 4. **Start the server:**
    ```bash
@@ -282,23 +279,26 @@ Current pricing (can be modified in `src/pages/BookSlot.tsx`):
 ## Support
 
 For issues or questions:
-1. Check MySQL Workbench for database connection
+1. Check MongoDB Atlas dashboard for database connection
 2. Check backend server logs (console output)
 3. Check browser console for frontend errors
 4. Verify Razorpay integration and test mode
-5. Ensure admin user exists in `admin_users` table
+5. Ensure admin user exists in `admin_users` collection
 6. Verify backend server is running on port 3001
+7. Check MongoDB connection string in `server/.env` file
+8. Ensure MongoDB Atlas network access allows your IP address
 
 ## Production Checklist
 
-- [ ] Set up production MySQL database
-- [ ] Configure secure database credentials
+- [ ] Set up production MongoDB Atlas cluster
+- [ ] Configure secure MongoDB connection string
 - [ ] Update SESSION_SECRET in production
 - [ ] Set up HTTPS for frontend and backend
 - [ ] Configure CORS properly for production domain
 - [ ] Add production Razorpay keys
 - [ ] Enable Razorpay webhooks for payment confirmation
-- [ ] Set up database backups
+- [ ] Set up MongoDB Atlas backups
+- [ ] Configure MongoDB Atlas network access (IP whitelist)
 - [ ] Configure environment variables securely
 - [ ] Set up custom domain
 - [ ] Enable HTTPS
